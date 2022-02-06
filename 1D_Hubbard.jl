@@ -1,6 +1,6 @@
 using LinearAlgebra, SparseArrays, Plots, Arpack, Combinatorics, ITensors, ITensorGPU
 
-#=
+
 function tight_binding(N,t,μ,A,BC="O")
     bst=10e-6
     mat=diagm(0 => fill(-μ-2t,N), 1 => fill(t*exp(1im*A+1im*bst),N-1), -1 => fill(t*exp(-1im*A-1im*bst),N-1))
@@ -38,7 +38,7 @@ function lanczos(ψ,ham,nmax,dt)
 end
 
 ##
-N=500
+N=3
 ham=tight_binding(N,1,0,0)
 vals,vecs=eigs(ham)
 GS=vecs[:,1]
@@ -146,7 +146,7 @@ end
 =#
 
 let
-    gpu = identity
+    gpu = cu
     N = 100
     sites = siteinds("S=1",N)
   
