@@ -44,8 +44,8 @@ function local_correlations(N,sites)
 end
 
 
-function main(Nx, Ny; μ = 0.0, t = 1.0, U = 5.0, α = 1//4, ν = 1, #Nx is the easy dimension, Ny the difficult
-                sparse_multithreading = false)
+function dmrg_run(Nx, Ny, μ, t, U, α, ν, #Nx is the easy dimension, Ny the difficult
+                sparse_multithreading = false, yperiodic = true)
     
     if sparse_multithreading
         ITensors.Strided.set_num_threads(1)
@@ -61,14 +61,15 @@ function main(Nx, Ny; μ = 0.0, t = 1.0, U = 5.0, α = 1//4, ν = 1, #Nx is the 
     Nϕ = α*(Nx-1)*(Ny-1) #number of fluxes
     loc_hilb = 4 #local hilbert space
     @show num_bos = ν * Nϕ 
+    
     sites = siteinds("Boson", N; dim=loc_hilb, conserve_qns=true)
-    lattice = square_lattice(Nx, Ny; yperiodic=false)
+    lattice = square_lattice(Nx, Ny; yperiodic=yperiodic)
 
     #=set up of DMRG schedule=#
-    sweeps = Sweeps(10)
-    setmaxdim!(sweeps, 100, 200, 300, 400, 500, 600, 700)
+    sweeps = Sweeps(15)
+    setmaxdim!(sweeps, 200, 200, 200, 200, 200, 300, 300, 400, 400,)
     setcutoff!(sweeps, 1e-8)
-    setnoise!(sweeps, 1e-3, 1e-5, 1e-7, 1e-9, 0)
+    setnoise!(sweeps,  1e-6, 1e-6, 0)
     #in_state = [n<=num_bos ? "1" : "0" for n in 1:(N-0)] #all bosons on the left, may be suboptimal
     in_state = [(n<=num_bos/2)||(n>(N-num_bos/2)) ? "1" : "0" for n in 1:(N-0)] #half on left half on right
     #in_state = [(n%(Ny-1)==0)&&(n<=num_bos*(Ny-1)) ? "1" : "0" for n in 1:(N-0)] #all bosons on the left, may be suboptimal
@@ -97,30 +98,49 @@ function main(Nx, Ny; μ = 0.0, t = 1.0, U = 5.0, α = 1//4, ν = 1, #Nx is the 
     energy, psi = @time dmrg(H, psi0, sweeps, verbose=false);
     ####################################
 
-    if sparse_multithreading
-        ITensors.disable_threaded_blocksparse()
-        ITensors.Strided.set_num_threads(16)
-        BLAS.set_num_threads(16)
-    end
-
     #= write mps to disk =#
-    f = h5open("MPS_HDF5/prova.h5","w")
-    write(f,"Nx=($Nx)_Ny=($Ny)",psi)
+    f = h5open("MPS_HDF5/local.h5","w")
+    write(f,"Nx_($Nx)_Ny_($Ny)_mu_($μ)_t_($t)_U_($U)_alpha_($α)_nu_($ν)",psi)
+    write(f,"pr",psi)
     close(f)
 
-    #= observables computation =#
     H2 = inner(H, psi, H, psi)
     variance = H2-energy^2
     @show real(variance) #variance to check for convergence
 
-    ent_entr = zeros(N-3)
-    for (ind, j) in enumerate((1:1:N)[2:end-2])
-        ent_entr[ind] = entanglement_entropy(psi, j) #entanglemet entropy
+    return energy, variance, psi
+end
+
+function observable_computation(psi, Nx, Ny, μ, t, U, α, ν, yperiodic = true)
+
+    ITensors.disable_threaded_blocksparse()
+    ITensors.Strided.set_num_threads(16)
+    BLAS.set_num_threads(16)
+
+    if (psi === nothing)
+        f = h5open("MPS_HDF5/local.h5","r")
+        psi = read(f,"Nx_($Nx)_Ny_($Ny)_mu_($μ)_t_($t)_U_($U)_alpha_($α)_nu_($ν)",MPS)
+        close(f)
     end
 
-    C = correlation_matrix(psi, "Adag", "A") #correlation matrix
-    dens = expect(psi, "N") #density
+    loc_hilb = 4
+    N = Nx * Ny
+    sites = siteinds(psi)
+    lattice = square_lattice(Nx, Ny; yperiodic=yperiodic)
+
+
+    #= observables computation =#
+
+    #ent_entr = zeros(N-3)
+    #for (ind, j) in enumerate((1:1:N)[2:end-2])
+    #    ent_entr[ind] = entanglement_entropy(psi, j) #entanglemet entropy
+    #end
+
+    C = correlation_matrix(psi, "Adag", "A"); #correlation matrix
+    dens = expect(psi, "N"); #density
+    
     @show sum(dens)
+    
     C2, C3 = local_correlations(N,sites) #local correlation operators
     exp_C2 = @show real(inner(psi,C2,psi)/num_bos)
     exp_C3 = @show real(inner(psi,C3,psi)/num_bos)
@@ -144,14 +164,8 @@ function main(Nx, Ny; μ = 0.0, t = 1.0, U = 5.0, α = 1//4, ν = 1, #Nx is the 
     
 end
 
-main(17,6, sparse_multithreading=true) #worth setting sparse_multithreading to false if Ny <4
+#= PARAMETERS =#
+Nx = 16; Ny = 3; μ = 0.0; t = 1.0; U = 4.0; α = 1//4; ν = 1/2; sparse_multithreading = true; yperiodic = false
 
-#study of time scaling (using 17 Nx and increasing Ny, keeping always the same sweep schedule)
-#trunc error 10e-9, 14 sweeps, alpha = 1/4
-#1 1.25
-#2 10.75 linkdim 9 
-#3 31.19 linkdim 34
-#4 71.36 linkdim 100
-#5 158.30 linkdim 301
-#6 397.96 saturation 450
-#7 740.526 
+E, σ, GS = dmrg_run(Nx, Ny, μ, t, U, α, ν, sparse_multithreading, yperiodic) #worth setting sparse_multithreading to false if Ny <4
+observable_computation(nothing, Nx, Ny, μ, t, U, α, ν, yperiodic)
