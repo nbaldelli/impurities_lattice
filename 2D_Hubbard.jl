@@ -4,16 +4,19 @@ import PyPlot
 const plt = PyPlot; 
 plt.matplotlib.use("TkAgg"); ENV["MPLBACKEND"] = "TkAgg"; plt.pygui(true); plt.ion()
 
-using LinearAlgebra, SparseArrays, Combinatorics, ITensors, ITensors.HDF5, MKL
+using LinearAlgebra, SparseArrays, Combinatorics, ITensors, ITensors.HDF5, MKL, DelimitedFiles
 
-function currents_from_correlation_V2(t, lattice::Vector{LatticeBond}, C, α=0)
+function currents_from_correlation_V2(t, lattice::Vector{LatticeBond}, C; α=0)
     curr_plot = zeros(ComplexF64,length(lattice))
     couples = Any[]
     for (ind,b) in enumerate(lattice)
         push!(couples, [(b.x1, b.y1), (b.x2, b.y2)])
+        println(ind)
         curr_plot[ind] += 1im*t*(b.x2-b.x1)*C[b.s2, b.s1]-1im*t*(b.x2-b.x1)*C[b.s1, b.s2]
         curr_plot[ind] += -1im*t*(b.y2-b.y1)*exp(-2pi*1im*α*b.x1*(b.y2-b.y1))*C[b.s1,b.s2]
         curr_plot[ind] += 1im*t*(b.y2-b.y1)*exp(+2pi*1im*α*b.x1*(b.y2-b.y1))*C[b.s2,b.s1]
+        println([(b.x1, b.y1), (b.x2, b.y2)])
+        println(curr_plot[ind])
     end
     return couples, real(curr_plot)
 end
@@ -58,7 +61,7 @@ function dmrg_run(Nx, Ny, μ, t, U, α, ν, #Nx is the easy dimension, Ny the di
     end
 
     N = Nx * Ny
-    Nϕ = α*(Nx-1)*(Ny-1) #number of fluxes
+    Nϕ = yperiodic ? α*(Nx-1)*(Ny) : α*(Nx-1)*(Ny-1) #number of fluxes
     loc_hilb = 4 #local hilbert space
     @show num_bos = ν * Nϕ 
     
@@ -117,34 +120,38 @@ function observable_computation(psi, Nx, Ny, μ, t, U, α, ν, yperiodic = true)
     ITensors.Strided.set_num_threads(16)
     BLAS.set_num_threads(16)
 
+    
     if (psi === nothing)
         f = h5open("MPS_HDF5/local.h5","r")
         psi = read(f,"Nx_($Nx)_Ny_($Ny)_mu_($μ)_t_($t)_U_($U)_alpha_($α)_nu_($ν)",MPS)
         close(f)
     end
-
+    
     loc_hilb = 4
     N = Nx * Ny
-    sites = siteinds(psi)
+    #sites = siteinds(psi)
     lattice = square_lattice(Nx, Ny; yperiodic=yperiodic)
 
-
     #= observables computation =#
-
-    #ent_entr = zeros(N-3)
-    #for (ind, j) in enumerate((1:1:N)[2:end-2])
-    #    ent_entr[ind] = entanglement_entropy(psi, j) #entanglemet entropy
-    #end
-
     C = correlation_matrix(psi, "Adag", "A"); #correlation matrix
-    dens = expect(psi, "N"); #density
-    
-    @show sum(dens)
-    
+    dens=real(diag(C))
+    #matr = readdlm("data_2D/dens_Nx_($Nx)_Ny_($Ny)_mu_($μ)_t_($t)_U_($U)_alpha_($α)_nu_($ν).txt", '\t')
+    #dens=matr[1:end]
+
+    #=
     C2, C3 = local_correlations(N,sites) #local correlation operators
-    exp_C2 = @show real(inner(psi,C2,psi)/num_bos)
-    exp_C3 = @show real(inner(psi,C3,psi)/num_bos)
-    couples, curr_plot = currents_from_correlation_V2(t, lattice, C, α) #current
+    exp_C2 = @show real(inner(psi,C2,psi)/sum(dens))
+    exp_C3 = @show real(inner(psi,C3,psi)/sum(dens))
+    =#
+    couples, curr_plot = currents_from_correlation_V2(t, lattice, C, α=α) #current
+    println(curr_plot)
+    
+    couples = Any[]
+    for (ind,b) in enumerate(lattice)
+        push!(couples, [(b.x1, b.y1), (b.x2, b.y2)])
+    end
+    #matr = readdlm("data_2D/curr_Nx_($Nx)_Ny_($Ny)_mu_($μ)_t_($t)_U_($U)_alpha_($α)_nu_($ν).txt", '\t')
+    #curr_plot=matr[1:end]
 
     #= plot of current and density =#
     fig, ax = plt.subplots(1, dpi = 220)
@@ -161,11 +168,10 @@ function observable_computation(psi, Nx, Ny, μ, t, U, α, ν, yperiodic = true)
     plt.tight_layout()
     display(fig)
     plt.close()
-    
 end
 
 #= PARAMETERS =#
-Nx = 16; Ny = 3; μ = 0.0; t = 1.0; U = 4.0; α = 1//4; ν = 1/2; sparse_multithreading = true; yperiodic = false
+Nx = 5; Ny = 4; μ = 0.0; t = 1.0; U = 1.0; α = 1/6; ν = 1; sparse_multithreading = true; yperiodic = false
 
 E, σ, GS = dmrg_run(Nx, Ny, μ, t, U, α, ν, sparse_multithreading, yperiodic) #worth setting sparse_multithreading to false if Ny <4
 observable_computation(nothing, Nx, Ny, μ, t, U, α, ν, yperiodic)
