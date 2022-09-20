@@ -21,6 +21,7 @@ function NKron(sites,op1,op2,pos)
     end
     return mat
 end
+
 function square_lattice_arr(Nx::Int, Ny::Int; kwargs...)
     yperiodic = get(kwargs, :yperiodic, false)
     yperiodic = yperiodic && (Ny > 2)
@@ -45,7 +46,7 @@ function square_lattice_arr(Nx::Int, Ny::Int; kwargs...)
     end
     return latt
   end
-end
+
 function hopping_bhubbard(labels,lattice)
     br_term=10e-6
     in_states_list=Vector{Int64}()
@@ -71,6 +72,7 @@ function hopping_bhubbard(labels,lattice)
     matr=sparse(in_states_list,out_states_list,kin_en)
     return matr.+matr'
 end
+
 function currents_MPO(t, lattice::Vector{LatticeBond}, sites,  α = 0) #Currents for ladder geometry with flux (this is the full MPO)
     curr_lowleg = OpSum(); curr_highleg = OpSum(); curr_rung = OpSum()
 

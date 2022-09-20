@@ -2,9 +2,9 @@
 using PyCall; ENV["KMP_DUPLICATE_LIB_OK"] = true
 import PyPlot
 const plt = PyPlot; 
-plt.matplotlib.use("TkAgg"); ENV["MPLBACKEND"] = "TkAgg"; plt.pygui(true); plt.ion()
+plt.matplotlib.use("Qt5Agg"); ENV["MPLBACKEND"] = "TkAgg"; plt.pygui(true); plt.ion()
 
-using LinearAlgebra, SparseArrays, Combinatorics, ITensors, ITensors.HDF5, MKL, DelimitedFiles, ITensorGLMakie, JLD
+using LinearAlgebra, SparseArrays, ITensors, ITensors.HDF5, DelimitedFiles
 
 function ITensors.op(::OpName"Sz", ::SiteType"Boson", s1::Index)
     sz = (1/4)*op("Id", s1) - op("N", s1)
@@ -66,7 +66,7 @@ function tebd(psi; cutoff=1E-9, δt=0.05, ttotal=1., J1=-sqrt(2), J2=-1, U=0)
     return psi
 end
 
-function dmrg_run(N, J1, J2, J3, U; loc_hilb=4, sparse_multithreading = false, in_state = nothing)
+function dmrg_run(N, J1, J2, J3, U; loc_hilb=4, sparse_multithreading = true, in_state = nothing)
     
     if sparse_multithreading
         ITensors.Strided.set_num_threads(1)
@@ -195,7 +195,7 @@ let
     time_ev = zeros(N,length(0.5:0.5:15)+1)
     time_ev[1:end,1] = real(diag(C))
     for (i, ttotal) in enumerate(0.5:0.5:15)
-        psi=tebd(psi, ttotal=0.5, J2=(J2+0.2), J1=J1, U = U)
+        psi=tebd(psi, ttotal=0.5, J2=(J2+0.1), J1=J1, U = U)
         C=correlation_matrix(psi,"Adag","A")
         time_ev[1:end, i+1] = real(diag(C))
         println(ttotal)
@@ -222,10 +222,10 @@ let
     plt.savefig("time_ev_n4_$U.pdf")    
 
     h5open("data2.h5","cw") do f
-        if haskey(f,"time_ev_J202_$U")
-            delete_object(f,"time_ev_J202_$U")
+        if haskey(f,"time_ev_J201_$U")
+            delete_object(f,"time_ev_J201_$U")
         end
-        write(f,"time_ev_J202_$U",time_ev)
+        write(f,"time_ev_J201_$U",time_ev)
     end
 end
 U=5
@@ -244,3 +244,71 @@ let
     end
 
 end
+
+function dmrg_run_trial(N, J1, U; loc_hilb=4, sparse_multithreading = true, in_state = nothing)
+    
+    if sparse_multithreading
+        ITensors.Strided.set_num_threads(1)
+        BLAS.set_num_threads(1)
+        ITensors.enable_threaded_blocksparse()
+    end
+
+    sites = siteinds("Boson", N; dim=loc_hilb, conserve_qns=true)
+
+    #=set up of DMRG schedule=#
+    sweeps = Sweeps(20)
+    setmaxdim!(sweeps, 200)
+    setcutoff!(sweeps, 1e-9)
+    setnoise!(sweeps, 0)
+    en_obs = DMRGObserver(energy_tol = 1e-10)
+
+    in_state = ["1" for n in 1:N] #half filling
+    #in_state[25:50] .= "1"
+    psi0 = randomMPS(sites, in_state)
+
+    #= hamiltonian definition =#
+    ampo = OpSum()  
+    for b1 in 1:(N-1) #+1: no frustration
+        ampo += -J1, "Adag", b1, "A", (b1+1)
+        ampo += -J1, "Adag", (b1+1), "A", b1
+    end
+    for n in 1:N
+        ampo += U/2, "N", n, "N", n #on-site interaction
+        ampo += -U/2, "N", n 
+    end
+    H = MPO(ampo, sites)
+
+    if sparse_multithreading
+        H = splitblocks(linkinds,H)
+    end
+
+    ####################################
+    #= DMRG =#
+    energy, psi = @time dmrg(H, psi0, sweeps, observer = en_obs, verbose=false);
+    ####################################
+
+    #= write mps to disk =#
+    #f = h5open("MPS_HDF5/local.h5","cw")
+    #write(f,"Nx=($Nx)_Ny=($Ny)",psi)
+    #close(f)
+
+    ITensors.disable_threaded_blocksparse()
+    ITensors.Strided.set_num_threads(16)
+    BLAS.set_num_threads(16)
+
+    #= observables computation =#
+    return psi
+end
+
+psi1 = dmrg_run_trial(30, 1, 2)
+C = correlation_matrix(psi, "Adag", "A")
+C1 = correlation_matrix(psi1, "Adag", "A")
+vals, vecs = eigen(C)
+vals1, vecs1 = eigen(C1)
+plt.figure(1, dpi=220)
+plt.scatter(1:30,[30, fill(0,29)...], label = "V=0")
+plt.scatter(1:30,reverse(vals1), label = "V≂̸0")
+plt.xlabel("Eigenv. number")
+plt.ylabel("Eigenvalue")
+plt.legend()
+plt.tight_layout()
