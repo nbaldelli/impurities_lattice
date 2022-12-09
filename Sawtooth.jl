@@ -1,8 +1,9 @@
 #PYPLOT options (took a while to figure out so DO NOT CHANGE)
 using PyCall; ENV["KMP_DUPLICATE_LIB_OK"] = true
 import PyPlot
+tkz = pyimport("tikzplotlib")
 const plt = PyPlot; 
-plt.matplotlib.use("Qt5Agg"); ENV["MPLBACKEND"] = "TkAgg"; plt.pygui(true); plt.ion()
+plt.matplotlib.use("TkAgg"); ENV["MPLBACKEND"] = "TkAgg"; plt.pygui(true); plt.ion()
 
 using LinearAlgebra, SparseArrays, ITensors, ITensors.HDF5, DelimitedFiles
 
@@ -129,10 +130,6 @@ function dmrg_run(N, J1, J2, J3, U; loc_hilb=4, sparse_multithreading = true, in
     variance = H2-energy^2
     @show real(variance) #variance to check for convergence
 
-    ITensors.disable_threaded_blocksparse()
-    ITensors.Strided.set_num_threads(16)
-    BLAS.set_num_threads(16)
-
     #= observables computation =#
     return psi
 end
@@ -147,6 +144,7 @@ function structure_factor(k, C)
     return ft/length(psi)
 end
 
+#==
 C = correlation_matrix(psi,"Adag","A")
 plt.figure(1,dpi=100)
 plt.plot(1:length(psi),diag(C))
@@ -179,23 +177,26 @@ plt.scatter(matr[1:end,1],abs.(matr[1:end,2]))
 plt.grid(); plt.xlabel("J3/J2")
 plt.ylabel("o_cdw")
 plt.title("N=80, hardcore, J1/J2=sqrt(2)")
-
+=#
+#=
 let
-    N = 24; J1 = -sqrt(2); J2 = 1.; U = 1; J3 = 0.0;
+    N = 24; J1 = -sqrt(2); J2 = 1.; U = 5; J3 = 0.0;
     in_state = [(n)%4==0 ? "0" : "0" for n in 1:N] #half filling
     for i in 3:4:length(in_state)
         in_state[i] = "1"
     end
 
-    #in_state[11] = "0"; #in_state[27] = "1"; in_state[27] = "1";
     psi = dmrg_run(N, J1, J2, J3, U, in_state = in_state)
+    @show ITensors.enable_threaded_blocksparse()
+    psi = apply(op("Adag", siteinds(psi)[13]),psi)
     C = correlation_matrix(psi,"Adag","A")
     plt.scatter(1:length(psi),diag(C))
     plt.plot(1:length(psi),diag(C))
+
     time_ev = zeros(N,length(0.5:0.5:15)+1)
     time_ev[1:end,1] = real(diag(C))
     for (i, ttotal) in enumerate(0.5:0.5:15)
-        psi=tebd(psi, ttotal=0.5, J2=(J2+0.1), J1=J1, U = U)
+        psi=tebd(psi, ttotal=0.5, J2=J2, J1=J1, U = U)
         C=correlation_matrix(psi,"Adag","A")
         time_ev[1:end, i+1] = real(diag(C))
         println(ttotal)
@@ -222,27 +223,35 @@ let
     plt.savefig("time_ev_n4_$U.pdf")    
 
     h5open("data2.h5","cw") do f
-        if haskey(f,"time_ev_J201_$U")
-            delete_object(f,"time_ev_J201_$U")
+        if haskey(f,"time_ev_n41_$U")
+            delete_object(f,"time_ev_n41_$U")
         end
-        write(f,"time_ev_J201_$U",time_ev)
+        write(f,"time_ev_n41_$U",time_ev)
     end
 end
-U=5
+=#
+U=1
+
 let
-
     h5open("data2.h5","r") do f
-        time_ev = read(f,"time_ev_n4-1_$U")
-        fig, ax = plt.subplots(1,dpi=100)
-        #plt.title("N=24, T=15*J2 J1/J2=sqrt(2), U=$U, in.state=N/4+1")
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Position")
-        sh = ax.imshow(time_ev, extent = [0,15,24,1], aspect = 0.6)
-        plt.colorbar(sh, ax=ax, label="Density", pad=0.04)
-        plt.tight_layout()
-        #plt.savefig("time_ev_$U.pdf")    
+        time_ev_J2 = read(f,"time_ev_J201_1")
+        println(time_ev_J2[:,1])
+        time_ev_n4 = read(f,"time_ev_n4_5")
+        println(time_ev_n4[:,1])
+        time_ev_5 = read(f,"time_ev_n41_5")
+        println(maximum(time_ev_5))
+        fig, ax = plt.subplots(1,3, tight_layout = true,  dpi=100)
+        #ax.set_xlabel("t")
+        #ax.set_ylabel("i")
+        im = ax[2].imshow(time_ev_J2, vmin = 0, vmax = 1., cmap = "viridis", extent = [0,15,24,1], aspect = 0.6)
+        im = ax[1].imshow(time_ev_n4, vmin = 0, vmax = 1., cmap = "viridis", extent = [0,15,24,1], aspect = 0.6)
+        im = ax[3].imshow(time_ev_5, vmin = 0, vmax = 1., cmap = "viridis", extent = [0,15,24,1], aspect = 0.6)
+        fig.subplots_adjust(right=0.8)
+        cbar_ax = fig.add_axes([0.82, 0.375, 0.05, 0.26])
+        fig.colorbar(im, cax=cbar_ax)
+        tkz.save("plots/time_ev.tex")
+        plt.savefig("plots/time_ev.pdf")    
     end
-
 end
 
 function dmrg_run_trial(N, J1, U; loc_hilb=4, sparse_multithreading = true, in_state = nothing)
@@ -299,16 +308,3 @@ function dmrg_run_trial(N, J1, U; loc_hilb=4, sparse_multithreading = true, in_s
     #= observables computation =#
     return psi
 end
-
-psi1 = dmrg_run_trial(30, 1, 2)
-C = correlation_matrix(psi, "Adag", "A")
-C1 = correlation_matrix(psi1, "Adag", "A")
-vals, vecs = eigen(C)
-vals1, vecs1 = eigen(C1)
-plt.figure(1, dpi=220)
-plt.scatter(1:30,[30, fill(0,29)...], label = "V=0")
-plt.scatter(1:30,reverse(vals1), label = "V≂̸0")
-plt.xlabel("Eigenv. number")
-plt.ylabel("Eigenvalue")
-plt.legend()
-plt.tight_layout()
